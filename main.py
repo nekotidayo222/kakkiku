@@ -5,14 +5,14 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import os
+from io import BytesIO
 
-TOKEN = os.getenv("TOKEN")  # Railway variables から取得
+TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
-# 設定ファイル読み込み
 try:
     with open("config.json", "r") as f:
         config = json.load(f)
@@ -23,7 +23,6 @@ def save_config():
     with open("config.json", "w") as f:
         json.dump(config, f, indent=4)
 
-# 画像取得関数
 def fetch_images(url):
     try:
         if url.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
@@ -49,10 +48,19 @@ def fetch_images(url):
         print(f"fetch error: {e}")
         return []
 
+async def send_image(channel, url):
+    try:
+        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            img_bytes = BytesIO(r.content)
+            filename = url.split("/")[-1]
+            await channel.send(file=discord.File(img_bytes, filename=filename))
+    except Exception as e:
+        print(f"image send error: {e}")
+
 # =========================
 # スラッシュコマンド
 # =========================
-
 @tree.command(name="setup", description="画像送信チャンネルを設定します")
 async def setup(interaction: discord.Interaction, channel: discord.TextChannel = None):
     if channel is None:
@@ -61,9 +69,9 @@ async def setup(interaction: discord.Interaction, channel: discord.TextChannel =
     save_config()
     await interaction.response.send_message(f"✅ 画像送信チャンネルを {channel.mention} に設定しました！")
 
-@tree.command(name="url", description="指定したURLから全ての画像を送信します")
+@tree.command(name="url", description="指定したURLから全ての画像を送信します（高画質）")
 async def url(interaction: discord.Interaction, url: str):
-    await interaction.response.defer(thinking=True)  # 「考え中...」表示
+    await interaction.response.defer(thinking=True)
     channel_id = config["channels"].get(str(interaction.guild.id), interaction.channel.id)
     channel = bot.get_channel(channel_id)
     images = fetch_images(url)
@@ -72,9 +80,9 @@ async def url(interaction: discord.Interaction, url: str):
         return
     await interaction.followup.send(f"📷 {len(images)} 枚の画像を取得しました！送信開始します...")
     for img in images:
-        await channel.send(img)
+        await send_image(channel, img)
 
-@tree.command(name="bookmark", description="URLをブックマークして監視します")
+@tree.command(name="bookmark", description="URLをブックマークして監視します（高画質）")
 async def bookmark(interaction: discord.Interaction, url: str):
     if url not in config["bookmarks"]:
         config["bookmarks"].append(url)
@@ -84,7 +92,7 @@ async def bookmark(interaction: discord.Interaction, url: str):
         await interaction.response.send_message("⚠️ すでに登録済みです。")
 
 # =========================
-# ブックマーク監視タスク
+# ブックマーク監視
 # =========================
 last_images = {}
 
@@ -101,7 +109,7 @@ async def check_bookmarks():
                 if channel:
                     await channel.send(f"🆕 {url} で新しい画像を検出しました ({len(diff)} 枚)")
                     for img in diff:
-                        await channel.send(img)
+                        await send_image(channel, img)
 
         last_images[url] = new_imgs
 
@@ -110,7 +118,7 @@ async def check_bookmarks():
 # =========================
 @bot.event
 async def on_ready():
-    await tree.sync()  # スラッシュコマンドを同期
+    await tree.sync()
     print(f"✅ Bot logged in as {bot.user}")
     check_bookmarks.start()
 
